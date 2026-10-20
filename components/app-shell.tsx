@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { isSessionValid, endSession } from '@/lib/auth'
 import { BottomNav } from './bottom-nav'
+import { DataProvider } from './data-provider'
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -24,11 +25,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-[430px] border-x border-line bg-bg pb-20">
-      <div key={pathname} className="animate-page-in">
-        {children}
+    <DataProvider>
+      <div className="mx-auto min-h-dvh w-full max-w-[430px] border-x border-line bg-bg pb-20">
+        <div key={pathname} className="animate-page-in">
+          {children}
+        </div>
+        <BottomNav />
       </div>
-      <BottomNav />
-    </div>
+    </DataProvider>
   )
 }

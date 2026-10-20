@@ -9,7 +9,7 @@ import { fetchCustomersDue } from '@/lib/data'
 import { formatRs } from '@/lib/format'
 
 export default function CustomersPage() {
-  const { data, error, isLoading, mutate } = useSWR('customers-due', fetchCustomersDue, { refreshInterval: 60_000 })
+  const { data, error, isLoading, mutate } = useSWR('customers-due', fetchCustomersDue)
   const total = (data ?? []).reduce((acc, c) => acc + Number(c.total_due ?? 0), 0)
 
   return (
@@ -18,7 +18,7 @@ export default function CustomersPage() {
 
       <main className="flex flex-col gap-4 p-4">
         {error && !data ? (
-          <ErrorState onRetry={() => mutate()} />
+          <ErrorState error={error} onRetry={() => mutate()} />
         ) : (
           <>
             {isLoading || !data ? (

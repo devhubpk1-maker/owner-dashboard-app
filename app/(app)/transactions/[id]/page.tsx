@@ -85,7 +85,7 @@ export default function ReceiptPage() {
 
       <main className="flex flex-col gap-4 p-4">
         {error && !data ? (
-          <ErrorState onRetry={() => mutate()} />
+          <ErrorState error={error} onRetry={() => mutate()} />
         ) : isLoading ? (
           <Skeleton className="h-96 rounded-xl bg-neutral-700" />
         ) : !data || !sale ? (

@@ -74,7 +74,7 @@ export default function TransactionsPage() {
         </div>
 
         {error && !data ? (
-          <ErrorState onRetry={retry} />
+          <ErrorState error={error ?? summary.error} onRetry={retry} />
         ) : isLoading ? (
           <RowsSkeleton rows={6} />
         ) : sales.length === 0 ? (

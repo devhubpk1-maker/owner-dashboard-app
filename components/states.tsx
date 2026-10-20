@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
-import { CloudOff } from 'lucide-react'
+import { CloudOff, Database, KeyRound, WifiOff } from 'lucide-react'
+import { errorKind } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 
 export function Skeleton({ className }: { className?: string }) {
@@ -22,11 +23,40 @@ export function RowsSkeleton({ rows = 5 }: { rows?: number }) {
   )
 }
 
-export function ErrorState({ onRetry }: { onRetry: () => void }) {
+const ERROR_COPY = {
+  setup: {
+    icon: Database,
+    title: 'Database not set up yet',
+    hint: 'Open Supabase > SQL Editor and run scripts/001_create_tables.sql, then scripts/003_fast_sync.sql.',
+  },
+  config: {
+    icon: KeyRound,
+    title: 'Supabase keys are invalid',
+    hint: 'Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in Settings > Vars.',
+  },
+  network: {
+    icon: WifiOff,
+    title: 'No connection',
+    hint: 'Check your internet connection and try again.',
+  },
+  unknown: {
+    icon: CloudOff,
+    title: 'Could not load data',
+    hint: 'Please try again in a moment.',
+  },
+} as const
+
+export function ErrorState({ onRetry, error }: { onRetry: () => void; error?: unknown }) {
+  const copy = ERROR_COPY[errorKind(error)]
+  const Icon = copy.icon
   return (
-    <div role="alert" className="flex flex-col items-center gap-3 rounded-xl border border-line bg-surface px-6 py-10 text-center">
-      <CloudOff className="size-8 text-danger" aria-hidden="true" />
-      <p className="text-sm text-ink">Could not load data. Pull down to refresh.</p>
+    <div
+      role="alert"
+      className="flex flex-col items-center gap-3 rounded-xl border border-line bg-surface px-6 py-10 text-center"
+    >
+      <Icon className="size-8 text-danger" aria-hidden="true" />
+      <p className="text-sm font-semibold text-ink">{copy.title}</p>
+      <p className="text-xs leading-relaxed text-muted text-pretty">{copy.hint}</p>
       <button
         type="button"
         onClick={onRetry}

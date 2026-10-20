@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils'
 
 export default function StockPage() {
   const [showAll, setShowAll] = useState(false)
-  const { data, error, isLoading, mutate } = useSWR('products', fetchProducts, { refreshInterval: 60_000 })
+  const { data, error, isLoading, mutate } = useSWR('products', fetchProducts)
 
   const lowStock = (data ?? [])
     .filter((p) => Number(p.stock_qty) <= Number(p.low_stock_threshold))
@@ -23,7 +23,7 @@ export default function StockPage() {
 
       <main className="flex flex-col gap-6 p-4">
         {error && !data ? (
-          <ErrorState onRetry={() => mutate()} />
+          <ErrorState error={error} onRetry={() => mutate()} />
         ) : isLoading || !data ? (
           <RowsSkeleton rows={6} />
         ) : (

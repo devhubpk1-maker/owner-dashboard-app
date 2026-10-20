@@ -6,6 +6,7 @@ import useSWR from 'swr'
 import { AlertTriangle, LogOut, PartyPopper, Receipt, RefreshCw } from 'lucide-react'
 import { AppHeader, HeaderButton } from '@/components/app-header'
 import { SaleRow } from '@/components/sale-row'
+import { useLiveStatus } from '@/components/data-provider'
 import { EmptyState, ErrorState, RowsSkeleton, Skeleton } from '@/components/states'
 import { endSession } from '@/lib/auth'
 import { fetchDashboard } from '@/lib/data'
@@ -34,9 +35,8 @@ function SectionHeader({ title, href }: { title: string; href: string }) {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { data, error, isLoading, isValidating, mutate } = useSWR('dashboard', fetchDashboard, {
-    refreshInterval: 60_000,
-  })
+  const { data, error, isLoading, isValidating, mutate } = useSWR('dashboard', fetchDashboard)
+  const live = useLiveStatus()
 
   function logout() {
     endSession()
@@ -61,7 +61,7 @@ export default function DashboardPage() {
 
       <main className="flex flex-col gap-6 p-4">
         {error && !data ? (
-          <ErrorState onRetry={() => mutate()} />
+          <ErrorState error={error} onRetry={() => mutate()} />
         ) : (
           <>
             <section aria-label="Today's stats" className="grid grid-cols-2 gap-3">
@@ -117,8 +117,18 @@ export default function DashboardPage() {
             </section>
 
             {data && (
-              <p className="pb-2 text-center text-xs text-muted">
-                Last synced: {timeAgo(data.shopUpdatedAt ?? data.fetchedAt)}
+              <p className="flex items-center justify-center gap-2 pb-2 text-center text-xs text-muted">
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    'size-2 rounded-full',
+                    live === 'live' ? 'bg-brand' : live === 'connecting' ? 'animate-pulse bg-muted' : 'bg-danger',
+                  )}
+                />
+                <span>
+                  {live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting' : 'Auto-refresh'}
+                  {' · '}Last synced: {timeAgo(data.fetchedAt)}
+                </span>
               </p>
             )}
           </>
