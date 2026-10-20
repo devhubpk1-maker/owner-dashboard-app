@@ -1,67 +1,104 @@
 import { supabase } from './supabase'
+import { toDataError } from './errors'
 import { rangeStart, type DateRange } from './format'
 import type { Customer, LedgerEntry, Product, Sale, SaleItem, Shop } from './types'
 
 export const PAGE_SIZE = 20
 
-function must<T>(result: { data: T | null; error: { message: string } | null }): T {
-  if (result.error) throw new Error(result.error.message)
+type Result<T> = { data: T | null; error: { message: string; code?: string } | null }
+
+function must<T>(result: Result<T>): T {
+  if (result.error) throw toDataError(result.error)
   return (result.data ?? ([] as unknown)) as T
 }
 
-const sum = (rows: Array<Record<string, unknown>>, key: string) =>
-  rows.reduce((acc, row) => acc + Number(row[key] ?? 0), 0)
-
-export async function fetchShop(): Promise<Shop | null> {
-  const { data, error } = await supabase.from('shops').select('*').limit(1).maybeSingle()
-  if (error) throw new Error(error.message)
-  return (data as Shop | null) ?? null
+function mustMaybe<T>(result: Result<T>): T | null {
+  if (result.error) throw toDataError(result.error)
+  return result.data ?? null
 }
 
-export async function fetchDashboard() {
-  const start = rangeStart('today')
+type SaleSummaryRow = Pick<Sale, 'id' | 'invoice_number' | 'total' | 'payment_method' | 'created_at'>
 
-  const [salesToday, itemsToday, customers, recent, products, shop] = await Promise.all([
-    supabase.from('sales').select('total').gte('created_at', start),
-    supabase
-      .from('sale_items')
-      .select('line_total, quantity, products(cost_price), sales!inner(created_at)')
-      .gte('sales.created_at', start),
+export type Dashboard = {
+  salesTotal: number
+  transactions: number
+  profit: number
+  udhaar: number
+  recent: SaleSummaryRow[]
+  lowStock: Array<Pick<Product, 'id' | 'name' | 'stock_qty' | 'low_stock_threshold'>>
+  shopUpdatedAt: string | null
+  fetchedAt: number
+}
+
+export async function fetchShop(): Promise<Shop | null> {
+  return mustMaybe(await supabase.from('shops').select('*').order('id').limit(1).maybeSingle()) as Shop | null
+}
+
+const isMissingFunction = (error: { code?: string } | null) => error?.code === 'PGRST202' || error?.code === '42883'
+
+async function dashboardFallback(startAt: string): Promise<Omit<Dashboard, 'fetchedAt'>> {
+  const [salesRes, dueRes, recentRes, productsRes, shop] = await Promise.all([
+    supabase.from('sales').select('id, total').gte('created_at', startAt),
     supabase.from('customers').select('total_due').gt('total_due', 0),
     supabase
       .from('sales')
       .select('id, invoice_number, total, payment_method, created_at')
       .order('created_at', { ascending: false })
       .limit(5),
-    supabase.from('products').select('id, name, stock_qty, low_stock_threshold'),
+    supabase.from('products').select('id, name, stock_qty, low_stock_threshold, cost_price'),
     fetchShop().catch(() => null),
   ])
-
-  const salesRows = must(salesToday) as Array<{ total: number }>
-  const itemRows = must(itemsToday) as unknown as Array<{
-    line_total: number
-    quantity: number
-    products: { cost_price: number | null } | null
-  }>
-  const customerRows = must(customers) as Array<{ total_due: number }>
-  const productRows = must(products) as Array<Pick<Product, 'id' | 'name' | 'stock_qty' | 'low_stock_threshold'>>
-
-  const profit = itemRows.reduce(
-    (acc, item) =>
-      acc + Number(item.line_total ?? 0) - Number(item.products?.cost_price ?? 0) * Number(item.quantity ?? 0),
-    0,
-  )
+  const sales = must(salesRes) as Array<{ id: string | number; total: number }>
+  const allProducts = must(productsRes) as Array<
+    Pick<Product, 'id' | 'name' | 'stock_qty' | 'low_stock_threshold'> & { cost_price: number | null }
+  >
+  const costById = new Map(allProducts.map((p) => [String(p.id), Number(p.cost_price ?? 0)]))
+  const items = sales.length
+    ? (must(
+        await supabase
+          .from('sale_items')
+          .select('product_id, quantity, line_total')
+          .in(
+            'sale_id',
+            sales.map((s) => s.id),
+          ),
+      ) as Array<{ product_id: string | number | null; quantity: number; line_total: number }>)
+    : []
+  const due = must(dueRes) as Array<{ total_due: number }>
+  const products = allProducts.map(({ cost_price: _cost, ...p }) => p)
 
   return {
-    salesTotal: sum(salesRows, 'total'),
-    transactions: salesRows.length,
-    profit,
-    udhaar: sum(customerRows, 'total_due'),
-    recent: must(recent) as Array<Pick<Sale, 'id' | 'invoice_number' | 'total' | 'payment_method' | 'created_at'>>,
-    lowStock: productRows
+    salesTotal: sales.reduce((sum, s) => sum + Number(s.total ?? 0), 0),
+    transactions: sales.length,
+    profit: items.reduce(
+      (sum, i) =>
+        sum + Number(i.line_total ?? 0) - (costById.get(String(i.product_id)) ?? 0) * Number(i.quantity ?? 0),
+      0,
+    ),
+    udhaar: due.reduce((sum, c) => sum + Number(c.total_due ?? 0), 0),
+    recent: must(recentRes) as SaleSummaryRow[],
+    lowStock: products
       .filter((p) => Number(p.stock_qty) <= Number(p.low_stock_threshold))
-      .sort((a, b) => Number(a.stock_qty) - Number(b.stock_qty)),
+      .sort((a, b) => Number(a.stock_qty) - Number(b.stock_qty))
+      .slice(0, 5),
     shopUpdatedAt: shop?.updated_at ?? null,
+  }
+}
+
+export async function fetchDashboard(): Promise<Dashboard> {
+  const startAt = rangeStart('today')
+  const rpc = await supabase.rpc('dashboard_summary', { start_at: startAt })
+  const data = (
+    isMissingFunction(rpc.error) ? await dashboardFallback(startAt) : must(rpc)
+  ) as Omit<Dashboard, 'fetchedAt'>
+  return {
+    salesTotal: Number(data.salesTotal ?? 0),
+    transactions: Number(data.transactions ?? 0),
+    profit: Number(data.profit ?? 0),
+    udhaar: Number(data.udhaar ?? 0),
+    recent: data.recent ?? [],
+    lowStock: data.lowStock ?? [],
+    shopUpdatedAt: data.shopUpdatedAt ?? null,
     fetchedAt: Date.now(),
   }
 }
@@ -74,29 +111,47 @@ export async function fetchSalesPage(range: DateRange, page: number) {
     .gte('created_at', rangeStart(range))
     .order('created_at', { ascending: false })
     .range(from, from + PAGE_SIZE - 1)
-  return must(result) as Array<Pick<Sale, 'id' | 'invoice_number' | 'total' | 'payment_method' | 'created_at'>>
+  return must(result) as SaleSummaryRow[]
 }
 
 export async function fetchSalesSummary(range: DateRange) {
-  const result = await supabase.from('sales').select('total').gte('created_at', rangeStart(range)).limit(10000)
-  const rows = must(result) as Array<{ total: number }>
-  return { count: rows.length, total: sum(rows, 'total') }
+  const startAt = rangeStart(range)
+  const rpc = await supabase.rpc('sales_summary', { start_at: startAt })
+  if (isMissingFunction(rpc.error)) {
+    const rows = must(await supabase.from('sales').select('total').gte('created_at', startAt)) as Array<{ total: number }>
+    return { count: rows.length, total: rows.reduce((sum, s) => sum + Number(s.total ?? 0), 0) }
+  }
+  const data = must(rpc) as { count: number; total: number }
+  return { count: Number(data.count ?? 0), total: Number(data.total ?? 0) }
 }
 
 export async function fetchReceipt(id: string) {
-  const [saleRes, shop] = await Promise.all([
-    supabase
-      .from('sales')
-      .select('*, sale_items(*, products(name, cost_price)), customers(name, phone)')
-      .eq('id', id)
-      .maybeSingle(),
+  // Fetched without PostgREST embeds so it works even when foreign keys are missing.
+  const [saleRes, itemsRes, shop] = await Promise.all([
+    supabase.from('sales').select('*').eq('id', id).maybeSingle(),
+    supabase.from('sale_items').select('*').eq('sale_id', id),
     fetchShop().catch(() => null),
   ])
-  if (saleRes.error) throw new Error(saleRes.error.message)
-  if (!saleRes.data) return null
-  const sale = saleRes.data as unknown as Sale & {
-    sale_items: SaleItem[]
-    customers: { name: string; phone: string | null } | null
+  const base = mustMaybe(saleRes) as Sale | null
+  if (!base) return null
+  const items = must(itemsRes) as SaleItem[]
+
+  const productIds = [...new Set(items.map((i) => i.product_id).filter((v) => v != null))]
+  const [productsRes, customerRes] = await Promise.all([
+    productIds.length
+      ? supabase.from('products').select('id, name, cost_price').in('id', productIds)
+      : Promise.resolve({ data: [], error: null }),
+    base.customer_id != null
+      ? supabase.from('customers').select('name, phone').eq('id', base.customer_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ])
+  const products = must(productsRes as Result<Array<{ id: unknown; name: string; cost_price: number | null }>>)
+  const productById = new Map(products.map((p) => [String(p.id), { name: p.name, cost_price: p.cost_price }]))
+
+  const sale = {
+    ...base,
+    sale_items: items.map((i) => ({ ...i, products: productById.get(String(i.product_id)) ?? null })),
+    customers: mustMaybe(customerRes as Result<{ name: string; phone: string | null }>),
   }
   return { sale, shop }
 }
@@ -128,8 +183,8 @@ export async function fetchCustomerDetail(id: string) {
       .ilike('payment_method', 'udhaar'),
     supabase.from('customer_payments').select('id, amount, note, created_at').eq('customer_id', id),
   ])
-  if (customerRes.error) throw new Error(customerRes.error.message)
-  if (!customerRes.data) return null
+  const customer = mustMaybe(customerRes) as Customer | null
+  if (!customer) return null
 
   const credits = must(creditsRes) as Array<Pick<Sale, 'id' | 'invoice_number' | 'total' | 'due_amount' | 'created_at'>>
   const payments = must(paymentsRes) as Array<{ id: number | string; amount: number; note: string | null; created_at: string }>
@@ -152,5 +207,5 @@ export async function fetchCustomerDetail(id: string) {
     })),
   ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
 
-  return { customer: customerRes.data as Customer, ledger }
+  return { customer, ledger }
 }

@@ -54,7 +54,7 @@ export default function CustomerDetailPage() {
 
       <main className="flex flex-col gap-5 p-4">
         {error && !data ? (
-          <ErrorState onRetry={() => mutate()} />
+          <ErrorState error={error} onRetry={() => mutate()} />
         ) : isLoading ? (
           <>
             <Skeleton className="h-28 rounded-xl" />

@@ -22,6 +22,7 @@ export interface Sale {
 export interface SaleItem {
   id: number | string
   sale_id: number | string
+  product_id?: number | string | null
   product_name?: string | null
   name?: string | null
   quantity: number
