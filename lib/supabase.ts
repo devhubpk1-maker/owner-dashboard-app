@@ -1,6 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+// Accept URLs pasted from the API docs (e.g. ".../rest/v1/"); supabase-js appends that path itself.
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()
+  .replace(/\/rest\/v1\/?$/, '')
+  .replace(/\/+$/, '')
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
 export const isSupabaseConfigured = Boolean(url && anonKey)
